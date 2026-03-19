@@ -9,8 +9,7 @@ import { ptBR } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, List, Search, Plus, Calendar as CalendarIcon, MapPin, X, LogOut, LogIn } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import { db } from './firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 function cn(...inputs: ClassValue[]) {
@@ -19,7 +18,7 @@ function cn(...inputs: ClassValue[]) {
 
 type Event = {
   id: string;
-  userId: string;
+  username: string;
   date: string;
   title: string;
   isAllDay: boolean;
@@ -65,17 +64,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
+      isAnonymous: true
     },
     operationType,
     path
@@ -84,7 +73,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { isOpen: boolean, onClose: () => void, onAdd: (e: Omit<Event, 'id' | 'userId'>) => void, selectedDate: Date, dayEvents: Event[] }) {
+function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { isOpen: boolean, onClose: () => void, onAdd: (e: Omit<Event, 'id' | 'username'>) => void, selectedDate: Date, dayEvents: Event[] }) {
   const [title, setTitle] = useState('');
   const [duration, setDuration] = useState(60);
   const [startTime, setStartTime] = useState('09:00');
@@ -155,7 +144,7 @@ function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { is
     e.preventDefault();
     if (!title.trim() || (hasConflict && !isAllDay)) return;
 
-    const newEvent: Omit<Event, 'id' | 'userId'> = {
+    const newEvent: Omit<Event, 'id' | 'username'> = {
       date: format(selectedDate, 'yyyy-MM-dd'),
       title,
       isAllDay,
@@ -265,12 +254,9 @@ function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { is
 }
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [loginInputValue, setLoginInputValue] = useState('');
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -281,24 +267,24 @@ export default function App() {
   const [touchEndX, setTouchEndX] = useState<number | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthReady(true);
-    });
-    return () => unsubscribe();
+    const savedUser = localStorage.getItem('agenda_username');
+    if (savedUser) {
+      setCurrentUser(savedUser);
+    }
+    setIsAuthReady(true);
   }, []);
 
   useEffect(() => {
-    if (!isAuthReady || !user) {
+    if (!isAuthReady || !currentUser) {
       setEvents([]);
       return;
     }
 
     let q;
-    if (user.email === 'cout@agenda.local') {
+    if (currentUser === 'COUT') {
       q = query(collection(db, 'events'));
     } else {
-      q = query(collection(db, 'events'), where('userId', '==', user.uid));
+      q = query(collection(db, 'events'), where('username', '==', currentUser));
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -307,13 +293,15 @@ export default function App() {
         const data = docSnap.data();
         
         // Migrate old events to COUT
-        if (user.email === 'cout@agenda.local' && data.userId !== user.uid) {
+        if (currentUser === 'COUT' && !data.username) {
           updateDoc(doc(db, 'events', docSnap.id), {
-            userId: user.uid
+            username: 'COUT'
           }).catch(err => console.error("Migration error:", err));
         }
         
-        loadedEvents.push({ id: docSnap.id, ...data } as Event);
+        if (data.username === currentUser || (currentUser === 'COUT' && !data.username)) {
+          loadedEvents.push({ id: docSnap.id, ...data } as Event);
+        }
       });
       setEvents(loadedEvents);
     }, (error) => {
@@ -321,43 +309,21 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, isAuthReady]);
+  }, [currentUser, isAuthReady]);
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleAuth = (e: React.FormEvent) => {
     e.preventDefault();
-    setLoginError(null);
-    const email = `${username.trim().toLowerCase()}@agenda.local`;
-
-    try {
-      if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
-    } catch (error: any) {
-      console.error("Auth error:", error);
-      let errorMessage = "Ocorreu um erro na autenticação.";
-      if (error.code === 'auth/invalid-credential') {
-        errorMessage = "Usuário ou senha incorretos.";
-      } else if (error.code === 'auth/email-already-in-use') {
-        errorMessage = "Este usuário já existe. Tente fazer login.";
-      } else if (error.code === 'auth/weak-password') {
-        errorMessage = "A senha deve ter pelo menos 6 caracteres.";
-      } else if (error.code === 'auth/operation-not-allowed') {
-        errorMessage = "O login por Email/Senha não está ativado no Firebase. Siga as instruções no chat para ativar.";
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      setLoginError(errorMessage);
+    const name = loginInputValue.trim().toUpperCase();
+    if (name) {
+      localStorage.setItem('agenda_username', name);
+      setCurrentUser(name);
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Logout error:", error);
-    }
+  const handleLogout = () => {
+    localStorage.removeItem('agenda_username');
+    setCurrentUser(null);
+    setEvents([]);
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -409,12 +375,12 @@ export default function App() {
     });
   }, [events, selectedDate]);
 
-  const handleAddEvent = async (newEventData: Omit<Event, 'id' | 'userId'>) => {
-    if (!user) return;
+  const handleAddEvent = async (newEventData: Omit<Event, 'id' | 'username'>) => {
+    if (!currentUser) return;
     try {
       await addDoc(collection(db, 'events'), {
         ...newEventData,
-        userId: user.uid,
+        username: currentUser,
         createdAt: serverTimestamp()
       });
     } catch (error) {
@@ -424,7 +390,7 @@ export default function App() {
 
   const handleDeleteEvent = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!user) return;
+    if (!currentUser) return;
     try {
       await deleteDoc(doc(db, 'events', id));
     } catch (error) {
@@ -456,7 +422,7 @@ export default function App() {
     );
   }
 
-  if (!user) {
+  if (!currentUser) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center font-sans p-4">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full text-center">
@@ -464,7 +430,7 @@ export default function App() {
             <CalendarIcon className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Agenda Inteligente</h1>
-          <p className="text-gray-500 mb-6">Entre com seu usuário para acessar sua agenda.</p>
+          <p className="text-gray-500 mb-6">Digite seu nome para acessar sua agenda.</p>
           
           <form onSubmit={handleAuth} className="space-y-4">
             <div>
@@ -472,19 +438,9 @@ export default function App() {
                 type="text"
                 required
                 placeholder="Nome de Usuário (ex: COUT)"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#ff4d4d] focus:ring-2 focus:ring-red-200 outline-none transition-all"
-              />
-            </div>
-            <div>
-              <input
-                type="password"
-                required
-                placeholder="Senha"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#ff4d4d] focus:ring-2 focus:ring-red-200 outline-none transition-all"
+                value={loginInputValue}
+                onChange={e => setLoginInputValue(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#ff4d4d] focus:ring-2 focus:ring-red-200 outline-none transition-all uppercase"
               />
             </div>
 
@@ -492,25 +448,9 @@ export default function App() {
               type="submit"
               className="w-full bg-[#ff4d4d] hover:bg-red-600 text-white font-bold text-lg py-3 rounded-xl transition-colors shadow-lg shadow-red-500/30"
             >
-              {isRegistering ? 'Criar Conta' : 'Entrar'}
+              Entrar
             </button>
           </form>
-
-          <div className="mt-6 text-sm text-gray-500">
-            {isRegistering ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'}
-            <button
-              onClick={() => { setIsRegistering(!isRegistering); setLoginError(null); }}
-              className="ml-1 text-[#ff4d4d] font-bold hover:underline"
-            >
-              {isRegistering ? 'Faça login' : 'Criar agora'}
-            </button>
-          </div>
-
-          {loginError && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl text-left">
-              <strong>Erro:</strong> {loginError}
-            </div>
-          )}
         </div>
       </div>
     );

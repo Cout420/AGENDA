@@ -9,7 +9,7 @@ service cloud.firestore {
     // Collection: events
     // Document ID: auto-generated
     // Fields:
-    //   - userId: string (required) - The ID of the user who owns this event.
+    //   - username: string (required) - The name of the user who owns this event.
     //   - date: string (required) - The date of the event in YYYY-MM-DD format.
     //   - title: string (required) - The title of the event.
     //   - isAllDay: boolean (required) - Whether the event is an all-day event.
@@ -24,30 +24,6 @@ service cloud.firestore {
     // ===============================================================
     // Helper Functions
     // ===============================================================
-    
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function isCout() {
-      return isAuthenticated() && request.auth.token.email == 'cout@agenda.local';
-    }
-
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.userId;
-    }
-    
-    function uidUnchanged() {
-      return !('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid;
-    }
-    
-    function uidNotModified() {
-      return !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId;
-    }
     
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
@@ -74,8 +50,8 @@ service cloud.firestore {
     }
 
     function isValidEvent() {
-      return hasRequiredFields(['userId', 'date', 'title', 'isAllDay', 'type']) &&
-             request.resource.data.userId == request.auth.uid &&
+      return hasRequiredFields(['username', 'date', 'title', 'isAllDay', 'type']) &&
+             validStringLength('username', 1, 50) &&
              validStringLength('date', 10, 10) &&
              validStringLength('title', 1, 200) &&
              request.resource.data.isAllDay is bool &&
@@ -91,10 +67,10 @@ service cloud.firestore {
     // ===============================================================
 
     match /events/{eventId} {
-      allow read: if isDocOwner() || isCout();
-      allow create: if isAuthenticated() && isValidEvent();
-      allow update: if (isDocOwner() && uidNotModified() && isValidEvent()) || (isCout() && isValidEvent());
-      allow delete: if isDocOwner() || isCout();
+      allow read: if true;
+      allow create: if isValidEvent();
+      allow update: if isValidEvent() || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['username']) && validStringLength('username', 1, 50));
+      allow delete: if true;
     }
   }
 }
