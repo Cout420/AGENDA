@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: events
+    // Document ID: auto-generated
+    // Fields:
+    //   - userId: string (required) - The ID of the user who owns this event.
+    //   - date: string (required) - The date of the event in YYYY-MM-DD format.
+    //   - title: string (required) - The title of the event.
+    //   - isAllDay: boolean (required) - Whether the event is an all-day event.
+    //   - startTime: string (optional) - The start time of the event in HH:mm format.
+    //   - endTime: string (optional) - The end time of the event in HH:mm format.
+    //   - duration: number (optional) - The duration of the event in minutes.
+    //   - location: string (optional) - The location of the event.
+    //   - type: string (required) - The type of the event ('allday' or 'timed').
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    function uidUnchanged() {
+      return !('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+    
+    function isValidOptionalNumber(field, min, max) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is number &&
+              request.resource.data[field] >= min &&
+              request.resource.data[field] <= max);
+    }
+
+    function isValidEvent() {
+      return hasRequiredFields(['userId', 'date', 'title', 'isAllDay', 'type']) &&
+             request.resource.data.userId == request.auth.uid &&
+             validStringLength('date', 10, 10) &&
+             validStringLength('title', 1, 200) &&
+             request.resource.data.isAllDay is bool &&
+             request.resource.data.type in ['allday', 'timed'] &&
+             isValidOptionalString('startTime', 5, 5) &&
+             isValidOptionalString('endTime', 5, 5) &&
+             isValidOptionalNumber('duration', 1, 1440) &&
+             isValidOptionalString('location', 1, 200);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /events/{eventId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidEvent();
+      allow update: if isDocOwner() && uidNotModified() && isValidEvent();
+      allow delete: if isDocOwner();
+    }
+  }
+}

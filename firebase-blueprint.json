@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "Event": {
+      "title": "Event",
+      "description": "A calendar event for a user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns this event."
+        },
+        "date": {
+          "type": "string",
+          "description": "The date of the event in YYYY-MM-DD format."
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the event."
+        },
+        "isAllDay": {
+          "type": "boolean",
+          "description": "Whether the event is an all-day event."
+        },
+        "startTime": {
+          "type": "string",
+          "description": "The start time of the event in HH:mm format."
+        },
+        "endTime": {
+          "type": "string",
+          "description": "The end time of the event in HH:mm format."
+        },
+        "duration": {
+          "type": "number",
+          "description": "The duration of the event in minutes."
+        },
+        "location": {
+          "type": "string",
+          "description": "The location of the event."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["allday", "timed"],
+          "description": "The type of the event."
+        }
+      },
+      "required": ["userId", "date", "title", "isAllDay", "type"]
+    }
+  },
+  "firestore": {
+    "/events/{eventId}": {
+      "schema": {
+        "$ref": "#/entities/Event"
+      },
+      "description": "Stores all calendar events."
+    }
+  }
+}
