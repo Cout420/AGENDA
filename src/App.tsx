@@ -267,6 +267,7 @@ function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { is
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -305,11 +306,23 @@ export default function App() {
   }, [user, isAuthReady]);
 
   const handleLogin = async () => {
+    setLoginError(null);
     try {
       const provider = new GoogleAuthProvider();
+      // Force account selection to avoid getting stuck
+      provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login error:", error);
+      let errorMessage = "Ocorreu um erro ao tentar fazer login.";
+      if (error.code === 'auth/popup-blocked') {
+        errorMessage = "O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+        errorMessage = "Este domínio não está autorizado no Firebase. Por favor, adicione a URL atual na lista de domínios autorizados no Console do Firebase.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      setLoginError(errorMessage);
     }
   };
 
@@ -433,6 +446,19 @@ export default function App() {
             <LogIn className="w-5 h-5" />
             Entrar com Google
           </button>
+          {loginError && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl text-left">
+              <strong>Erro:</strong> {loginError}
+              <p className="mt-2 text-xs">
+                Se o pop-up não abrir, tente abrir o aplicativo em uma nova aba.
+              </p>
+            </div>
+          )}
+          <div className="mt-6 text-sm text-gray-500">
+            <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800">
+              Abrir em uma nova aba
+            </a>
+          </div>
         </div>
       </div>
     );
