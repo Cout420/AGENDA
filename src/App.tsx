@@ -10,8 +10,8 @@ import { ChevronLeft, ChevronRight, List, Search, Plus, Calendar as CalendarIcon
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -218,7 +218,7 @@ function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { is
                       const conflict = isTimeConflict(time, duration);
                       return (
                         <option key={time} value={time} disabled={conflict}>
-                          {time} {conflict ? '(Ocupado)' : ''}
+                          {time}
                         </option>
                       );
                     })}
@@ -251,7 +251,7 @@ function QuickAddModal({ isOpen, onClose, onAdd, selectedDate, dayEvents }: { is
               className={cn(
                 "w-full font-bold text-lg py-4 rounded-2xl mt-6 transition-all",
                 (hasConflict && !isAllDay)
-                  ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  ? "opacity-50 cursor-not-allowed bg-[#ff4d4d] text-white shadow-lg shadow-red-500/30"
                   : "bg-[#ff4d4d] hover:bg-red-600 text-white shadow-lg shadow-red-500/30"
               )}
             >
@@ -268,6 +268,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -291,11 +294,26 @@ export default function App() {
       return;
     }
 
-    const q = query(collection(db, 'events'), where('userId', '==', user.uid));
+    let q;
+    if (user.email === 'cout@agenda.local') {
+      q = query(collection(db, 'events'));
+    } else {
+      q = query(collection(db, 'events'), where('userId', '==', user.uid));
+    }
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const loadedEvents: Event[] = [];
-      snapshot.forEach((doc) => {
-        loadedEvents.push({ id: doc.id, ...doc.data() } as Event);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        
+        // Migrate old events to COUT
+        if (user.email === 'cout@agenda.local' && data.userId !== user.uid) {
+          updateDoc(doc(db, 'events', docSnap.id), {
+            userId: user.uid
+          }).catch(err => console.error("Migration error:", err));
+        }
+        
+        loadedEvents.push({ id: docSnap.id, ...data } as Event);
       });
       setEvents(loadedEvents);
     }, (error) => {
@@ -305,20 +323,28 @@ export default function App() {
     return () => unsubscribe();
   }, [user, isAuthReady]);
 
-  const handleLogin = async () => {
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoginError(null);
+    const email = `${username.trim().toLowerCase()}@agenda.local`;
+
     try {
-      const provider = new GoogleAuthProvider();
-      // Force account selection to avoid getting stuck
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
+      if (isRegistering) {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
     } catch (error: any) {
-      console.error("Login error:", error);
-      let errorMessage = "Ocorreu um erro ao tentar fazer login.";
-      if (error.code === 'auth/popup-blocked') {
-        errorMessage = "O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site.";
-      } else if (error.code === 'auth/unauthorized-domain') {
-        errorMessage = "Este domínio não está autorizado no Firebase. Por favor, adicione a URL atual na lista de domínios autorizados no Console do Firebase.";
+      console.error("Auth error:", error);
+      let errorMessage = "Ocorreu um erro na autenticação.";
+      if (error.code === 'auth/invalid-credential') {
+        errorMessage = "Usuário ou senha incorretos.";
+      } else if (error.code === 'auth/email-already-in-use') {
+        errorMessage = "Este usuário já existe. Tente fazer login.";
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = "A senha deve ter pelo menos 6 caracteres.";
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = "O login por Email/Senha não está ativado no Firebase. Siga as instruções no chat para ativar.";
       } else if (error.message) {
         errorMessage = error.message;
       }
@@ -438,27 +464,53 @@ export default function App() {
             <CalendarIcon className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Agenda Inteligente</h1>
-          <p className="text-gray-500 mb-8">Faça login para salvar e sincronizar seus compromissos em todos os seus dispositivos.</p>
-          <button 
-            onClick={handleLogin}
-            className="w-full bg-[#ff4d4d] hover:bg-red-600 text-white font-bold text-lg py-4 rounded-2xl transition-colors shadow-lg shadow-red-500/30 flex items-center justify-center gap-2"
-          >
-            <LogIn className="w-5 h-5" />
-            Entrar com Google
-          </button>
+          <p className="text-gray-500 mb-6">Entre com seu usuário para acessar sua agenda.</p>
+          
+          <form onSubmit={handleAuth} className="space-y-4">
+            <div>
+              <input
+                type="text"
+                required
+                placeholder="Nome de Usuário (ex: COUT)"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#ff4d4d] focus:ring-2 focus:ring-red-200 outline-none transition-all"
+              />
+            </div>
+            <div>
+              <input
+                type="password"
+                required
+                placeholder="Senha"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#ff4d4d] focus:ring-2 focus:ring-red-200 outline-none transition-all"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-[#ff4d4d] hover:bg-red-600 text-white font-bold text-lg py-3 rounded-xl transition-colors shadow-lg shadow-red-500/30"
+            >
+              {isRegistering ? 'Criar Conta' : 'Entrar'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-sm text-gray-500">
+            {isRegistering ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'}
+            <button
+              onClick={() => { setIsRegistering(!isRegistering); setLoginError(null); }}
+              className="ml-1 text-[#ff4d4d] font-bold hover:underline"
+            >
+              {isRegistering ? 'Faça login' : 'Criar agora'}
+            </button>
+          </div>
+
           {loginError && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl text-left">
               <strong>Erro:</strong> {loginError}
-              <p className="mt-2 text-xs">
-                Se o pop-up não abrir, tente abrir o aplicativo em uma nova aba.
-              </p>
             </div>
           )}
-          <div className="mt-6 text-sm text-gray-500">
-            <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800">
-              Abrir em uma nova aba
-            </a>
-          </div>
         </div>
       </div>
     );

@@ -33,6 +33,10 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
+    function isCout() {
+      return isAuthenticated() && request.auth.token.email == 'cout@agenda.local';
+    }
+
     function isDocOwner() {
       return isAuthenticated() && request.auth.uid == resource.data.userId;
     }
@@ -87,10 +91,10 @@ service cloud.firestore {
     // ===============================================================
 
     match /events/{eventId} {
-      allow read: if isDocOwner();
+      allow read: if isDocOwner() || isCout();
       allow create: if isAuthenticated() && isValidEvent();
-      allow update: if isDocOwner() && uidNotModified() && isValidEvent();
-      allow delete: if isDocOwner();
+      allow update: if (isDocOwner() && uidNotModified() && isValidEvent()) || (isCout() && isValidEvent());
+      allow delete: if isDocOwner() || isCout();
     }
   }
 }
